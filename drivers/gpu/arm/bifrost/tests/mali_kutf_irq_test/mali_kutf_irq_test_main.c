@@ -1,11 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note
 /*
  *
- * (C) COPYRIGHT 2016-2018, 2020 ARM Limited. All rights reserved.
+ * (C) COPYRIGHT 2016-2018, 2020-2022 ARM Limited. All rights reserved.
  *
  * This program is free software and is provided to you under the terms of the
  * GNU General Public License version 2 as published by the Free Software
  * Foundation, and any use by you of this program is subject to the terms
- * of such GNU licence.
+ * of such GNU license.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -16,8 +17,6 @@
  * along with this program; if not, you can access it online at
  * http://www.gnu.org/licenses/gpl-2.0.html.
  *
- * SPDX-License-Identifier: GPL-2.0
- *
  */
 
 #include <linux/module.h>
@@ -25,8 +24,9 @@
 #include <linux/interrupt.h>
 
 #include "mali_kbase.h"
-#include <midgard/device/mali_kbase_device.h>
-#include <midgard/backend/gpu/mali_kbase_pm_internal.h>
+#include <device/mali_kbase_device.h>
+#include <backend/gpu/mali_kbase_pm_internal.h>
+#include <backend/gpu/mali_kbase_irq_internal.h>
 
 #include <kutf/kutf_suite.h>
 #include <kutf/kutf_utils.h>
@@ -40,18 +40,16 @@
  */
 
 /* KUTF test application pointer for this test */
-struct kutf_application *irq_app;
+static struct kutf_application *irq_app;
 
 /**
- * struct kutf_irq_fixture data - test fixture used by the test functions.
+ * struct kutf_irq_fixture_data - test fixture used by the test functions.
  * @kbdev:	kbase device for the GPU.
  *
  */
 struct kutf_irq_fixture_data {
 	struct kbase_device *kbdev;
 };
-
-#define SEC_TO_NANO(s)	      ((s)*1000000000LL)
 
 /* ID for the GPU IRQ */
 #define GPU_IRQ_HANDLER 2
@@ -212,6 +210,11 @@ static void mali_kutf_irq_latency(struct kutf_context *context)
 		average_time += irq_time - start_time;
 
 		udelay(10);
+		/* Sleep for a ms, every 10000 iterations, to avoid misleading warning
+		 * of CPU softlockup when all GPU IRQs keep going to the same CPU.
+		 */
+		if (!(i % 10000))
+			msleep(1);
 	}
 
 	/* Go back to default handler */
@@ -234,15 +237,17 @@ static void mali_kutf_irq_latency(struct kutf_context *context)
 }
 
 /**
- * Module entry point for this test.
+ * mali_kutf_irq_test_main_init - Module entry point for this test.
+ *
+ * Return: 0 on success, error code otherwise
  */
-int mali_kutf_irq_test_main_init(void)
+static int __init mali_kutf_irq_test_main_init(void)
 {
 	struct kutf_suite *suite;
 
 	irq_app = kutf_create_application("irq");
 
-	if (NULL == irq_app) {
+	if (irq_app == NULL) {
 		pr_warn("Creation of test application failed!\n");
 		return -ENOMEM;
 	}
@@ -251,7 +256,7 @@ int mali_kutf_irq_test_main_init(void)
 			1, mali_kutf_irq_default_create_fixture,
 			mali_kutf_irq_default_remove_fixture);
 
-	if (NULL == suite) {
+	if (suite == NULL) {
 		pr_warn("Creation of test suite failed!\n");
 		kutf_destroy_application(irq_app);
 		return -ENOMEM;
@@ -263,9 +268,9 @@ int mali_kutf_irq_test_main_init(void)
 }
 
 /**
- * Module exit point for this test.
+ * mali_kutf_irq_test_main_exit - Module exit point for this test.
  */
-void mali_kutf_irq_test_main_exit(void)
+static void __exit mali_kutf_irq_test_main_exit(void)
 {
 	kutf_destroy_application(irq_app);
 }

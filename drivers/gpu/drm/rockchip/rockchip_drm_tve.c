@@ -11,10 +11,10 @@
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 
-#include <drm/drmP.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_of.h>
+#include <drm/drm_probe_helper.h>
 
 #include <uapi/linux/videodev2.h>
 
@@ -29,13 +29,13 @@ static const struct drm_display_mode cvbs_mode[] = {
 		   816, 864, 0, 576, 580, 586, 625, 0,
 		   DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC |
 		   DRM_MODE_FLAG_INTERLACE | DRM_MODE_FLAG_DBLCLK),
-		   .vrefresh = 50, 0, },
+		   0, },
 
 	{ DRM_MODE("720x480i", DRM_MODE_TYPE_DRIVER, 13500, 720, 753,
 		   815, 858, 0, 480, 480, 486, 525, 0,
 		   DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC |
 		   DRM_MODE_FLAG_INTERLACE | DRM_MODE_FLAG_DBLCLK),
-		   .vrefresh = 60, 0, },
+		   0, },
 };
 
 #define tve_writel(offset, v)		writel_relaxed(v, tve->regbase + (offset))
@@ -337,7 +337,6 @@ static const struct drm_encoder_funcs rockchip_tve_encoder_funcs = {
 };
 
 static const struct drm_connector_funcs rockchip_tve_connector_funcs = {
-	.dpms = drm_atomic_helper_connector_dpms,
 	.detect = rockchip_tve_connector_detect,
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.destroy = rockchip_tve_connector_destroy,
@@ -545,7 +544,6 @@ static int rockchip_tve_bind(struct device *dev, struct device *master,
 	}
 
 	tve->enable = 0;
-	platform_set_drvdata(pdev, tve);
 	tve->drm_dev = drm_dev;
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	tve->reg_phy_base = res->start;
@@ -587,8 +585,8 @@ static int rockchip_tve_bind(struct device *dev, struct device *master,
 	check_uboot_logo(tve);
 	tve->tv_format = TVOUT_CVBS_PAL;
 	encoder = &tve->encoder;
-	encoder->possible_crtcs = drm_of_find_possible_crtcs(drm_dev,
-							     dev->of_node);
+	encoder->possible_crtcs = rockchip_drm_of_find_possible_crtcs(drm_dev,
+								      dev->of_node);
 	dev_dbg(tve->dev, "possible_crtc:%d\n", encoder->possible_crtcs);
 
 	ret = drm_encoder_init(drm_dev, encoder, &rockchip_tve_encoder_funcs,
@@ -601,7 +599,6 @@ static int rockchip_tve_bind(struct device *dev, struct device *master,
 	drm_encoder_helper_add(encoder, &rockchip_tve_encoder_helper_funcs);
 
 	connector = &tve->connector;
-	connector->port = dev->of_node;
 	connector->interlace_allowed = 1;
 	ret = drm_connector_init(drm_dev, connector,
 				 &rockchip_tve_connector_funcs,
@@ -614,13 +611,17 @@ static int rockchip_tve_bind(struct device *dev, struct device *master,
 	drm_connector_helper_add(connector,
 				 &rockchip_tve_connector_helper_funcs);
 
-	ret = drm_mode_connector_attach_encoder(connector, encoder);
+	ret = drm_connector_attach_encoder(connector, encoder);
 	if (ret < 0) {
 		dev_dbg(tve->dev, "failed to attach connector and encoder\n");
 		goto err_free_connector;
 	}
+	tve->sub_dev.connector = &tve->connector;
+	tve->sub_dev.of_node = tve->dev->of_node;
+	rockchip_drm_register_sub_dev(&tve->sub_dev);
 
 	pm_runtime_enable(dev);
+	dev_set_drvdata(dev, tve);
 	dev_dbg(tve->dev, "%s tv encoder probe ok\n", match->compatible);
 
 	return 0;
@@ -641,12 +642,14 @@ static void rockchip_tve_unbind(struct device *dev, struct device *master,
 {
 	struct rockchip_tve *tve = dev_get_drvdata(dev);
 
+	rockchip_drm_unregister_sub_dev(&tve->sub_dev);
 	rockchip_tve_encoder_disable(&tve->encoder);
 
 	drm_connector_cleanup(&tve->connector);
 	drm_encoder_cleanup(&tve->encoder);
 
 	pm_runtime_disable(dev);
+	dev_set_drvdata(dev, NULL);
 }
 
 static const struct component_ops rockchip_tve_component_ops = {
@@ -664,6 +667,9 @@ static int rockchip_tve_probe(struct platform_device *pdev)
 static void rockchip_tve_shutdown(struct platform_device *pdev)
 {
 	struct rockchip_tve *tve = dev_get_drvdata(&pdev->dev);
+
+	if (!tve)
+		return;
 
 	mutex_lock(&tve->suspend_lock);
 
@@ -689,7 +695,6 @@ struct platform_driver rockchip_tve_driver = {
 		   .of_match_table = of_match_ptr(rockchip_tve_dt_ids),
 	},
 };
-module_platform_driver(rockchip_tve_driver);
 
 MODULE_AUTHOR("Algea Cao <Algea.cao@rock-chips.com>");
 MODULE_DESCRIPTION("ROCKCHIP TVE Driver");

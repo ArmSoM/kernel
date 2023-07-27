@@ -15,7 +15,7 @@
 #include <linux/regmap.h>
 
 #include <drm/drm_of.h>
-#include <drm/drmP.h>
+#include <drm/drm_drv.h>
 #include <video/videomode.h>
 
 #define RK618_VIF0_REG0			0x0000
@@ -145,15 +145,16 @@ static void rk618_vif_bridge_disable(struct drm_bridge *bridge)
 }
 
 static void rk618_vif_bridge_mode_set(struct drm_bridge *bridge,
-				      struct drm_display_mode *mode,
-				      struct drm_display_mode *adjusted)
+				      const struct drm_display_mode *mode,
+				      const struct drm_display_mode *adjusted)
 {
 	struct rk618_vif *vif = bridge_to_vif(bridge);
 
 	drm_mode_copy(&vif->mode, adjusted);
 }
 
-static int rk618_vif_bridge_attach(struct drm_bridge *bridge)
+static int rk618_vif_bridge_attach(struct drm_bridge *bridge,
+				   enum drm_bridge_attach_flags flags)
 {
 	struct rk618_vif *vif = bridge_to_vif(bridge);
 	struct device *dev = vif->dev;
@@ -174,15 +175,11 @@ static int rk618_vif_bridge_attach(struct drm_bridge *bridge)
 		if (!vif->bridge)
 			return -EPROBE_DEFER;
 
-		vif->bridge->encoder = bridge->encoder;
-
-		ret = drm_bridge_attach(bridge->dev, vif->bridge);
+		ret = drm_bridge_attach(bridge->encoder, vif->bridge, bridge, 0);
 		if (ret) {
 			dev_err(dev, "failed to attach bridge\n");
 			return ret;
 		}
-
-		bridge->next = vif->bridge;
 	}
 
 	return 0;
@@ -229,11 +226,7 @@ static int rk618_vif_probe(struct platform_device *pdev)
 
 	vif->base.funcs = &rk618_vif_bridge_funcs;
 	vif->base.of_node = dev->of_node;
-	ret = drm_bridge_add(&vif->base);
-	if (ret) {
-		dev_err(dev, "failed to add bridge\n");
-		return ret;
-	}
+	drm_bridge_add(&vif->base);
 
 	return 0;
 }

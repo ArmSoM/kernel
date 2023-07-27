@@ -1,13 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  *	uvc_gadget.c  --  USB Video Class Gadget driver
  *
  *	Copyright (C) 2009-2010
  *	    Laurent Pinchart (laurent.pinchart@ideasonboard.com)
- *
- *	This program is free software; you can redistribute it and/or modify
- *	it under the terms of the GNU General Public License as published by
- *	the Free Software Foundation; either version 2 of the License, or
- *	(at your option) any later version.
  */
 
 #include <linux/device.h>
@@ -48,7 +44,7 @@ MODULE_PARM_DESC(trace, "Trace level bitmask");
 #define UVC_STRING_STREAMING_IDX		1
 
 static struct usb_string uvc_en_us_strings[] = {
-	[UVC_STRING_CONTROL_IDX].s = "UVC Camera",
+	/* [UVC_STRING_CONTROL_IDX].s = DYNAMIC, */
 	[UVC_STRING_STREAMING_IDX].s = "Video Streaming",
 	{  }
 };
@@ -279,6 +275,10 @@ uvc_function_ep0_complete(struct usb_ep *ep, struct usb_request *req)
 	struct v4l2_event v4l2_event;
 	struct uvc_event *uvc_event = (void *)&v4l2_event.u.data;
 
+	uvc_trace(UVC_TRACE_CONTROL,
+		  "event_setup_out %d, data len %d\n",
+		  uvc->event_setup_out, req->actual);
+
 	if (uvc->event_setup_out) {
 		uvc->event_setup_out = 0;
 
@@ -296,6 +296,11 @@ uvc_function_setup(struct usb_function *f, const struct usb_ctrlrequest *ctrl)
 	struct uvc_device *uvc = to_uvc(f);
 	struct v4l2_event v4l2_event;
 	struct uvc_event *uvc_event = (void *)&v4l2_event.u.data;
+
+	uvc_trace(UVC_TRACE_CONTROL,
+		  "setup request %02x %02x value %04x index %04x %04x\n",
+		  ctrl->bRequestType, ctrl->bRequest, le16_to_cpu(ctrl->wValue),
+		  le16_to_cpu(ctrl->wIndex), le16_to_cpu(ctrl->wLength));
 
 	if ((ctrl->bRequestType & USB_TYPE_MASK) != USB_TYPE_CLASS) {
 		uvcg_info(f, "invalid request type\n");
@@ -381,6 +386,14 @@ uvc_function_set_alt(struct usb_function *f, unsigned interface, unsigned alt)
 
 		usb_ep_enable(uvc->control_ep);
 
+		if (uvc->event_suspend) {
+			memset(&v4l2_event, 0, sizeof(v4l2_event));
+			v4l2_event.type = UVC_EVENT_RESUME;
+			v4l2_event_queue(&uvc->vdev, &v4l2_event);
+			uvc->event_suspend = 0;
+			uvc_trace(UVC_TRACE_SUSPEND, "send UVC_EVENT_RESUME\n");
+		}
+
 		if (uvc->state == UVC_STATE_DISCONNECTED) {
 			memset(&v4l2_event, 0, sizeof(v4l2_event));
 			v4l2_event.type = UVC_EVENT_CONNECT;
@@ -419,7 +432,7 @@ uvc_function_set_alt(struct usb_function *f, unsigned interface, unsigned alt)
 			if (!uvc->video.ep)
 				return -EINVAL;
 
-			uvcg_info(f, "reset UVC\n");
+			INFO(cdev, "reset UVC\n");
 			usb_ep_disable(uvc->video.ep);
 
 			ret = config_ep_by_speed(f->config->cdev->gadget,
@@ -464,7 +477,7 @@ uvc_function_set_alt(struct usb_function *f, unsigned interface, unsigned alt)
 
 		case UVC_STATE_STREAMING:
 			if (!alt) {
-				uvcg_info(f, "bulk streaming intf not support alt 0\n");
+				INFO(cdev, "bulk streaming intf not support alt 0\n");
 				return 0;
 			}
 
@@ -500,10 +513,33 @@ uvc_function_disable(struct usb_function *f)
 	v4l2_event_queue(&uvc->vdev, &v4l2_event);
 
 	uvc->state = UVC_STATE_DISCONNECTED;
-	f->config->cdev->gadget->uvc_enabled = false;
 
 	usb_ep_disable(uvc->video.ep);
 	usb_ep_disable(uvc->control_ep);
+}
+
+static void uvc_function_suspend(struct usb_function *f)
+{
+	struct uvc_device *uvc = to_uvc(f);
+	struct v4l2_event v4l2_event;
+
+	memset(&v4l2_event, 0, sizeof(v4l2_event));
+	v4l2_event.type = UVC_EVENT_SUSPEND;
+	v4l2_event_queue(&uvc->vdev, &v4l2_event);
+	uvc->event_suspend = 1;
+	uvc_trace(UVC_TRACE_SUSPEND, "send UVC_EVENT_SUSPEND\n");
+}
+
+static void uvc_function_resume(struct usb_function *f)
+{
+	struct uvc_device *uvc = to_uvc(f);
+	struct v4l2_event v4l2_event;
+
+	memset(&v4l2_event, 0, sizeof(v4l2_event));
+	v4l2_event.type = UVC_EVENT_RESUME;
+	v4l2_event_queue(&uvc->vdev, &v4l2_event);
+	uvc->event_suspend = 0;
+	uvc_trace(UVC_TRACE_SUSPEND, "send UVC_EVENT_RESUME\n");
 }
 
 /* --------------------------------------------------------------------------
@@ -513,10 +549,7 @@ uvc_function_disable(struct usb_function *f)
 void
 uvc_function_connect(struct uvc_device *uvc)
 {
-	struct usb_composite_dev *cdev = uvc->func.config->cdev;
 	int ret;
-
-	cdev->gadget->uvc_enabled = true;
 
 	if ((ret = usb_function_activate(&uvc->func)) < 0)
 		uvcg_info(&uvc->func, "UVC connect failed with %d\n", ret);
@@ -563,7 +596,7 @@ uvc_register_video(struct uvc_device *uvc)
 
 	video_set_drvdata(&uvc->vdev, uvc);
 
-	ret = video_register_device(&uvc->vdev, VFL_TYPE_GRABBER, -1);
+	ret = video_register_device(&uvc->vdev, VFL_TYPE_VIDEO, -1);
 	if (ret < 0)
 		return ret;
 
@@ -797,7 +830,12 @@ uvc_function_bind(struct usb_configuration *c, struct usb_function *f)
 		uvc_hs_streaming_ep.wMaxPacketSize =
 			cpu_to_le16(max_packet_size |
 				    ((max_packet_mult - 1) << 11));
-		uvc_hs_streaming_ep.bInterval = opts->streaming_interval;
+
+		/* A high-bandwidth endpoint must specify a bInterval value of 1 */
+		if (max_packet_mult > 1)
+			uvc_hs_streaming_ep.bInterval = 1;
+		else
+			uvc_hs_streaming_ep.bInterval = opts->streaming_interval;
 
 		uvc_ss_streaming_ep.wMaxPacketSize =
 			cpu_to_le16(max_packet_size);
@@ -885,6 +923,12 @@ uvc_function_bind(struct usb_configuration *c, struct usb_function *f)
 		uvc_ss_bulk_streaming_ep.bEndpointAddress = address;
 	}
 
+#if defined(CONFIG_ARCH_ROCKCHIP) && defined(CONFIG_NO_GKI)
+	if (opts->device_name)
+		uvc_en_us_strings[UVC_STRING_CONTROL_IDX].s = opts->device_name;
+#endif
+
+	uvc_en_us_strings[UVC_STRING_CONTROL_IDX].s = opts->function_name;
 	us = usb_gstrings_attach(cdev, uvc_function_strings,
 				 ARRAY_SIZE(uvc_en_us_strings));
 	if (IS_ERR(us)) {
@@ -966,7 +1010,7 @@ uvc_function_bind(struct usb_configuration *c, struct usb_function *f)
 	/* Initialise video. */
 	ret = uvcg_video_init(&uvc->video, uvc);
 	if (ret < 0)
-		goto error;
+		goto v4l2_error;
 
 	if (opts->streaming_bulk)
 		uvc->video.max_payload_size = uvc->video.imagesize;
@@ -974,14 +1018,14 @@ uvc_function_bind(struct usb_configuration *c, struct usb_function *f)
 	ret = uvc_register_video(uvc);
 	if (ret < 0) {
 		uvcg_err(f, "failed to register video device\n");
-		goto error;
+		goto v4l2_error;
 	}
 
 	return 0;
 
-error:
+v4l2_error:
 	v4l2_device_unregister(&uvc->v4l2_dev);
-
+error:
 	if (uvc->control_req)
 		usb_ep_free_request(cdev->gadget->ep0, uvc->control_req);
 	kfree(uvc->control_buf);
@@ -999,6 +1043,15 @@ static void uvc_free_inst(struct usb_function_instance *f)
 	struct f_uvc_opts *opts = fi_to_f_uvc_opts(f);
 
 	mutex_destroy(&opts->lock);
+
+#if defined(CONFIG_ARCH_ROCKCHIP) && defined(CONFIG_NO_GKI)
+	if (opts->device_name_allocated) {
+		opts->device_name_allocated = false;
+		kfree(opts->device_name);
+		opts->device_name = NULL;
+	}
+#endif
+
 	kfree(opts);
 }
 
@@ -1046,6 +1099,7 @@ static struct usb_function_instance *uvc_alloc_inst(void)
 	pd->bmControls[0]		= 1;
 	pd->bmControls[1]		= 0;
 	pd->iProcessing			= 0;
+	pd->bmVideoStandards		= 0;
 
 	od = &opts->uvc_output_terminal;
 	od->bLength			= UVC_DT_OUTPUT_TERMINAL_SIZE;
@@ -1118,6 +1172,7 @@ static struct usb_function_instance *uvc_alloc_inst(void)
 	opts->streaming_interval = 1;
 	opts->streaming_maxpacket = 1024;
 	opts->pm_qos_latency = 0;
+	snprintf(opts->function_name, sizeof(opts->function_name), "UVC Camera");
 
 	ret = uvcg_attach_configfs(opts);
 	if (ret < 0) {
@@ -1141,12 +1196,36 @@ static void uvc_unbind(struct usb_configuration *c, struct usb_function *f)
 {
 	struct usb_composite_dev *cdev = c->cdev;
 	struct uvc_device *uvc = to_uvc(f);
+	long wait_ret = 1;
 
 	uvcg_info(f, "%s\n", __func__);
+
+	/* If we know we're connected via v4l2, then there should be a cleanup
+	 * of the device from userspace either via UVC_EVENT_DISCONNECT or
+	 * though the video device removal uevent. Allow some time for the
+	 * application to close out before things get deleted.
+	 */
+	if (uvc->func_connected) {
+		uvcg_dbg(f, "waiting for clean disconnect\n");
+		wait_ret = wait_event_interruptible_timeout(uvc->func_connected_queue,
+				uvc->func_connected == false, msecs_to_jiffies(500));
+		uvcg_dbg(f, "done waiting with ret: %ld\n", wait_ret);
+	}
 
 	device_remove_file(&uvc->vdev.dev, &dev_attr_function_name);
 	video_unregister_device(&uvc->vdev);
 	v4l2_device_unregister(&uvc->v4l2_dev);
+
+	if (uvc->func_connected) {
+		/* Wait for the release to occur to ensure there are no longer any
+		 * pending operations that may cause panics when resources are cleaned
+		 * up.
+		 */
+		uvcg_warn(f, "%s no clean disconnect, wait for release\n", __func__);
+		wait_ret = wait_event_interruptible_timeout(uvc->func_connected_queue,
+				uvc->func_connected == false, msecs_to_jiffies(1000));
+		uvcg_dbg(f, "done waiting for release with ret: %ld\n", wait_ret);
+	}
 
 	usb_ep_free_request(cdev->gadget->ep0, uvc->control_req);
 	kfree(uvc->control_buf);
@@ -1166,6 +1245,7 @@ static struct usb_function *uvc_alloc(struct usb_function_instance *fi)
 
 	mutex_init(&uvc->video.mutex);
 	uvc->state = UVC_STATE_DISCONNECTED;
+	init_waitqueue_head(&uvc->func_connected_queue);
 	opts = fi_to_f_uvc_opts(fi);
 
 	mutex_lock(&opts->lock);
@@ -1202,6 +1282,8 @@ static struct usb_function *uvc_alloc(struct usb_function_instance *fi)
 	uvc->func.disable = uvc_function_disable;
 	uvc->func.setup = uvc_function_setup;
 	uvc->func.free_func = uvc_free;
+	uvc->func.suspend = uvc_function_suspend;
+	uvc->func.resume = uvc_function_resume;
 	uvc->func.bind_deactivated = true;
 
 	return &uvc->func;

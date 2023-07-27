@@ -8,7 +8,7 @@
 
 / {
 	chosen {
-		bootargs = "earlyprintk console=ttyFIQ0 rw root=PARTUUID=614e0000-0000 rootfstype=ext4 rootwait";
+		bootargs = "earlycon=uart8250,mmio32,0xff690000 console=ttyFIQ0 vmalloc=496M rw root=PARTUUID=614e0000-0000 rootfstype=ext4 rootwait";
 	};
 
 	/delete-node/ dmc@ff610000;
@@ -74,23 +74,14 @@
 	};
 
 	reserved-memory {
-		ramoops_mem: ramoops@00000000 {
+		ramoops_mem: ramoops@8000000 {
 			reg = <0x0 0x8000000 0x0 0xF0000>;
 		};
 
 		drm_logo: drm-logo@00000000 {
-		compatible = "rockchip,drm-logo";
+			compatible = "rockchip,drm-logo";
 			reg = <0x0 0x0 0x0 0x0>;
 		};
-	};
-
-	ramoops {
-		compatible = "ramoops";
-		record-size = <0x0 0x20000>;
-		console-size = <0x0 0x80000>;
-		ftrace-size = <0x0 0x00000>;
-		pmsg-size = <0x0 0x50000>;
-		memory-region = <&ramoops_mem>;
 	};
 
 	fiq-debugger {
@@ -98,17 +89,13 @@
 		interrupts = <GIC_SPI 155 IRQ_TYPE_LEVEL_HIGH>;
 		rockchip,serial-id = <2>;
 		rockchip,wake-irq = <0>;
-		/* If enable uart uses irq instead of fiq */
-		rockchip,irq-mode-enable = <0>;
+		rockchip,irq-mode-enable = <1>; /* If enable uart uses irq instead of fiq */
 		rockchip,baudrate = <115200>;  /* Only 115200 and 1500000 */
 		pinctrl-names = "default";
 		pinctrl-0 = <&uart2_xfer>;
 	};
 
-	psci {
-		compatible = "arm,psci-1.0";
-		method = "smc";
-	};
+	/delete-node/ timer@ff810000;
 
 	display-subsystem {
 		status = "okay";
@@ -165,22 +152,6 @@
 	};
 };
 
-&cpu0 {
-	enable-method = "psci";
-};
-
-&cpu1 {
-	enable-method = "psci";
-};
-
-&cpu2 {
-	enable-method = "psci";
-};
-
-&cpu3 {
-	enable-method = "psci";
-};
-
 &dmac_bus_s {
 	/* change to non-secure dmac */
 	reg = <0x0 0xff600000 0x0 0x4000>;
@@ -190,16 +161,34 @@
 	compatible = "rockchip,rk3288-secure-efuse";
 };
 
+&mpp_srv {
+	status = "okay";
+};
+
+&hevc {
+	status = "okay";
+};
+
+&hevc_mmu {
+	status = "okay";
+};
+
+&iep {
+	status = "okay";
+};
+
+&iep_mmu {
+	status = "okay";
+};
+
 &rga {
 	compatible = "rockchip,rga2";
 	clocks = <&cru ACLK_RGA>, <&cru HCLK_RGA>, <&cru SCLK_RGA>;
 	clock-names = "aclk_rga", "hclk_rga", "clk_rga";
-	assigned-clocks = <&cru ACLK_RGA>, <&cru SCLK_RGA>;
-	assigned-clock-rates = <300000000>, <300000000>;
 	status = "okay";
 };
 
-&rockchip_suspend {
+&rng {
 	status = "okay";
 };
 
@@ -207,16 +196,18 @@
 	status = "disabled";
 };
 
-&video_phy {
+&vdpu {
 	status = "okay";
 };
 
-&vopb {
-	assigned-clocks = <&cru DCLK_VOP0>;
-	assigned-clock-parents = <&cru PLL_GPLL>;
+&vepu {
+	status = "okay";
 };
 
-&vopl {
-	assigned-clocks = <&cru DCLK_VOP1>;
-	assigned-clock-parents = <&cru PLL_CPLL>;
+&vpu_mmu {
+	status = "okay";
+};
+
+&video_phy {
+	status = "okay";
 };

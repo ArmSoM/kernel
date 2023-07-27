@@ -2,13 +2,13 @@
 // Copyright (c) 2018 Fuzhou Rockchip Electronics Co., Ltd
 
 /dts-v1/;
-#include <dt-bindings/soc/rockchip-io-domain.h>
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/pinctrl/rockchip.h>
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/display/drm_mipi_dsi.h>
 #include <dt-bindings/sensor-dev.h>
 #include <dt-bindings/pwm/pwm.h>
+#include "dt-bindings/usb/pd.h"
 #include "rk3399pro.dtsi"
 #include "rk3399-linux.dtsi"
 #include "rk3399-opp.dtsi"
@@ -114,6 +114,21 @@
 		interrupts = <GIC_SPI 150 IRQ_TYPE_LEVEL_HIGH 0>;
 	};
 
+	hdmi_sound: hdmi-sound {
+		status = "okay";
+		compatible = "simple-audio-card";
+		simple-audio-card,format = "i2s";
+		simple-audio-card,mclk-fs = <256>;
+		simple-audio-card,name = "rockchip,hdmi";
+
+		simple-audio-card,cpu {
+			sound-dai = <&i2s2>;
+		};
+		simple-audio-card,codec {
+			sound-dai = <&hdmi>;
+		};
+	};
+
 	panel: panel {
 		compatible = "simple-panel";
 		backlight = <&backlight>;
@@ -158,22 +173,7 @@
 		rockchip,codec = <&rk809_codec>;
 	};
 
-	hdmi_sound: hdmi-sound {
-		status = "okay";
-		compatible = "simple-audio-card";
-		simple-audio-card,format = "i2s";
-		simple-audio-card,mclk-fs = <256>;
-		simple-audio-card,name = "rockchip,hdmi";
-
-		simple-audio-card,cpu {
-			sound-dai = <&i2s2>;
-		};
-		simple-audio-card,codec {
-			sound-dai = <&hdmi>;
-		};
-	};
-
-	rk_headset {
+	rk_headset: rk-headset {
 		compatible = "rockchip_headset";
 		headset_gpio = <&gpio0 RK_PB5 GPIO_ACTIVE_HIGH>;
 		pinctrl-names = "default";
@@ -200,6 +200,26 @@
 	usbacm_video_control: usbacm-video-control {
 		compatible = "rockchip,usbacm-video-control";
 		status = "disabled";
+	};
+
+	vbus_typec: vbus-typec-regulator {
+		compatible = "regulator-fixed";
+		enable-active-high;
+		gpio = <&gpio1 18 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&vcc5v0_typec0_en>;
+		regulator-name = "vbus_typec";
+		vin-supply = <&vcc5v0_sys>;
+	};
+
+	vbus_typec: vbus-typec-regulator {
+		compatible = "regulator-fixed";
+		enable-active-high;
+		gpio = <&gpio1 18 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&vcc5v0_typec0_en>;
+		regulator-name = "vbus_typec";
+		vin-supply = <&vcc5v0_sys>;
 	};
 
 	vcc_phy: vcc-phy-regulator {
@@ -244,7 +264,6 @@
 
 &cdn_dp {
 	status = "okay";
-	extcon = <&fusb0>;
 	phys = <&tcphy0_dp>;
 };
 
@@ -281,7 +300,7 @@
 	center-supply = <&vdd_center>;
 };
 
-&dp_in_vopl {
+&dp_in_vopb {
 	status = "disabled";
 };
 
@@ -574,6 +593,7 @@
 			};
 
 			vcc_sd: LDO_REG9 {
+				regulator-always-on;
 				regulator-boot-on;
 				regulator-min-microvolt = <3300000>;
 				regulator-max-microvolt = <3300000>;
@@ -585,22 +605,15 @@
 			};
 
 			vcc5v0_usb: SWITCH_REG1 {
-				regulator-min-microvolt = <5000000>;
-				regulator-max-microvolt = <5000000>;
-
 				regulator-name = "vcc5v0_usb";
 				regulator-state-mem {
 					regulator-on-in-suspend;
-					regulator-suspend-microvolt = <5000000>;
 				};
 			};
 
 			vccio_3v3: SWITCH_REG2 {
 				regulator-always-on;
 				regulator-boot-on;
-				regulator-min-microvolt = <3300000>;
-				regulator-max-microvolt = <3300000>;
-
 				regulator-name = "vccio_3v3";
 				regulator-state-mem {
 					regulator-off-in-suspend;
@@ -664,7 +677,6 @@
 	bq25700: bq25700@6b {
 		compatible = "ti,bq25703";
 		reg = <0x6b>;
-		extcon = <&fusb0>;
 		interrupt-parent = <&gpio1>;
 		interrupts = <RK_PA1 IRQ_TYPE_LEVEL_LOW>;
 		pinctrl-names = "default";
@@ -736,10 +748,7 @@
 		pwdn-gpios = <&gpio4 25 GPIO_ACTIVE_HIGH>;
 		pinctrl-names = "rockchip,camera_default";
 		pinctrl-0 = <&cif_clkout>;
-		rockchip,camera-module-index = <0>;
-		rockchip,camera-module-facing = "back";
-		rockchip,camera-module-name = "CMK-CT0116";
-		rockchip,camera-module-lens-name = "Largan-50013A1";
+
 		lens-focus = <&vm149c>;
 
 		port {
@@ -796,16 +805,53 @@
 	i2c-scl-falling-time-ns = <11>;
 	clock-frequency = <100000>;
 
-	fusb0: fusb30x@22 {
-		compatible = "fairchild,fusb302";
+	usbc0: fusb302@22 {
+		compatible = "fcs,fusb302";
 		reg = <0x22>;
+		interrupt-parent = <&gpio1>;
+		interrupts = <RK_PA2 IRQ_TYPE_LEVEL_LOW>;
 		pinctrl-names = "default";
-		pinctrl-0 = <&fusb0_int>;
-		int-n-gpios = <&gpio1 RK_PA2 GPIO_ACTIVE_HIGH>;
-		vbus-5v-gpios = <&gpio0 RK_PA1 GPIO_ACTIVE_LOW>;
+		pinctrl-0 = <&usbc0_int>;
+		vbus-supply = <&vbus_typec>;
 		status = "okay";
-	};
 
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+				usbc0_role_sw: endpoint@0 {
+					remote-endpoint = <&dwc3_0_role_switch>;
+				};
+			};
+		};
+
+		usb_con: connector {
+			compatible = "usb-c-connector";
+			label = "USB-C";
+			data-role = "dual";
+			power-role = "dual";
+			try-power-role = "sink";
+			op-sink-microwatt = <1000000>;
+			sink-pdos =
+				<PDO_FIXED(5000, 2500, PDO_FIXED_USB_COMM)>;
+			source-pdos =
+				<PDO_FIXED(5000, 1500, PDO_FIXED_USB_COMM)>;
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+					usbc0_orien_sw: endpoint {
+						remote-endpoint = <&tcphy0_orientation_switch>;
+					};
+				};
+			};
+		};
+	};
 };
 
 &i2s1 {
@@ -818,38 +864,8 @@
 	status = "okay";
 };
 
-&iep {
-	status = "okay";
-};
-
-&iep_mmu {
-	status = "okay";
-};
-
 &io_domains {
 	status = "okay";
-	/*
-	 * If the uboot use rkdevelop branch, the io-domain is not set
-	 * during uboot phase, it will cause the io voltage is not suit for
-	 * the hardware,maybe will damage the io of rk3399, so we add
-	 * uboot-set value to make sure the value is same with the kernel,
-	 * ofcause you must make sure firstly the value here is suit for your
-	 * hardware. The available value is defined in
-	 * include/dt-bindings/soc/rockchip-io-domain.h, they are
-	 * also list here for more convenient configuration:
-	 * bt656-supply: RK3399_BT656_VDD_1V8 or RK3399_BT656_VDD_3V3
-	 * audio-supply: RK3399_AUDIO_VDD_1V8 or RK3399_AUDIO_VDD_3V3
-	 * gpio1830-supply: RK3399_GPIO1833_VDD_1V8 or RK3399_GPIO1833_VDD_3V3
-	 * sdmmc-supply: don't need to configure because the voltage
-	 *                       is set in source code during runtime.
-	 * NOTE:
-	 * 1. The value in uboot-set must be enclosed in "()", otherwise will
-	 *     cause compile error.
-	 * 2. The uboot-set configuration must be cooperated with submit
-	 *     in u-boot.
-	 */
-	uboot-set = <(RK3399_BT656_VDD_1V8 | RK3399_AUDIO_VDD_1V8 |
-				RK3399_GPIO1833_VDD_3V3)>;
 	bt656-supply = <&vcca_1v8>;
 	audio-supply = <&vcca_1v8>;
 	sdmmc-supply = <&vccio_sd>;
@@ -945,18 +961,6 @@
 
 &pmu_io_domains {
 	status = "okay";
-	/*
-	 * If the uboot use rkdevelop branch, the pmu_io_domain is not set
-	 * during uboot phase, it will cause the io voltage is not suit for
-	 * the hardware,maybe will damage the io of rk3399, so we add
-	 * uboot-set value to make sure the value is same with the kernel,
-	 * ofcause you must make sure firstly the value here is suit for your
-	 * hardware. The available value is defined in
-	 * include/dt-bindings/soc/rockchip-io-domain.h, they are
-	 * also list here for more convenient configuration:
-	 * pmu1830-supply: RK3399_PMU1830_VDD_1V8 or RK3399_PMU1830_VDD_3V0
-	 */
-	uboot-set = <RK3399_PMU1830_VDD_1V8>;
 	pmu1830-supply = <&vcc_1v8>;
 };
 
@@ -972,6 +976,7 @@
 	status = "okay";
 	assigned-clocks = <&cru PLL_NPLL>, <&cru SCLK_CIF_OUT_SRC>, <&cru SCLK_CIF_OUT>;
 	assigned-clock-rates = <594000000>, <594000000>, <37125000>;
+
 	port {
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -995,12 +1000,6 @@
 			remote-endpoint = <&dphy_tx1rx1_out>;
 		};
 	};
-};
-
-&rkvdec {
-	status = "okay";
-	/* 0 means ion, 1 means drm */
-	//allocator = <0>;
 };
 
 &rockchip_suspend {
@@ -1033,12 +1032,11 @@
 	vref-supply = <&vcc_1v8>;
 };
 
-&sdmmc {// Hardware issue, don't use uhs mode on evb board
-	//sd-uhs-sdr12;
-	//sd-uhs-sdr25;
-	//sd-uhs-sdr50;
-	//sd-uhs-sdr104;
-	status = "disabled";
+&sdmmc {
+	sd-uhs-sdr12;
+	sd-uhs-sdr25;
+	sd-uhs-sdr50;
+	sd-uhs-sdr104;
 };
 
 &spi1 {
@@ -1053,8 +1051,16 @@
 };
 
 &tcphy0 {
-	extcon = <&fusb0>;
 	status = "okay";
+	orientation-switch;
+	port {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		tcphy0_orientation_switch: endpoint@0 {
+			reg = <0>;
+			remote-endpoint = <&usbc0_orien_sw>;
+		};
+	};
 };
 
 &tcphy1 {
@@ -1069,7 +1075,6 @@
 
 &u2phy0 {
 	status = "okay";
-	extcon = <&fusb0>;
 
 	u2phy0_otg: otg-port {
 		status = "okay";
@@ -1116,7 +1121,6 @@
 };
 
 &usbdrd3_0 {
-	extcon = <&fusb0>;
 	status = "okay";
 };
 
@@ -1126,6 +1130,15 @@
 
 &usbdrd_dwc3_0 {
 	status = "okay";
+	usb-role-switch;
+	port {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		dwc3_0_role_switch: endpoint@0 {
+			reg = <0>;
+			remote-endpoint = <&usbc0_role_sw>;
+		};
+	};
 };
 
 &usbdrd_dwc3_1 {
@@ -1148,12 +1161,6 @@
 	status = "okay";
 };
 
-&vpu {
-	status = "okay";
-	/* 0 means ion, 1 means drm */
-	//allocator = <0>;
-};
-
 &pinctrl {
 	pinctrl-names = "default";
 	pinctrl-0 = <&npu_ref_clk>;
@@ -1161,35 +1168,28 @@
 	bq2570 {
 		charger_ok_int: charger-ok-int {
 			rockchip,pins =
-				<1 RK_PA1 0 &pcfg_pull_up>;
+				<1 RK_PA1 RK_FUNC_GPIO &pcfg_pull_up>;
 			};
 	};
 
 	camera {
 		cam_pwren_high: cam-pwren-high {
 			rockchip,pins =
-				<4 RK_PC5 0 &pcfg_output_high>;
-			};
-	};
-
-	fusb30x {
-		fusb0_int: fusb0-int {
-			rockchip,pins =
-				<1 RK_PA2 0 &pcfg_pull_up>;
+				<4 RK_PC5 RK_FUNC_GPIO &pcfg_output_high>;
 			};
 	};
 
 	headphone {
 		hp_det: hp-det {
 			rockchip,pins =
-				<0 RK_PB5 0 &pcfg_pull_up>;
+				<0 RK_PB5 RK_FUNC_GPIO &pcfg_pull_up>;
 		};
 	};
 
 	lcd_rst {
 		lcd_rst_gpio: lcd-rst-gpio {
 			rockchip,pins =
-				<3 RK_PA4 0 &pcfg_pull_none>;
+				<3 RK_PA4 RK_FUNC_GPIO &pcfg_pull_none>;
 		};
 	};
 
@@ -1203,20 +1203,20 @@
 	pmic {
 		pmic_int_l: pmic-int-l {
 			rockchip,pins =
-				<1 RK_PC2 0 &pcfg_pull_up>;
+				<1 RK_PC2 RK_FUNC_GPIO &pcfg_pull_up>;
 		};
 		vsel1_gpio: vsel1-gpio {
 			rockchip,pins =
-				<1 RK_PC1 0 &pcfg_pull_down>;
+				<1 RK_PC1 RK_FUNC_GPIO &pcfg_pull_down>;
 		};
 		vsel2_gpio: vsel2-gpio {
 			rockchip,pins =
-				<1 RK_PB6 0 &pcfg_pull_down>;
+				<1 RK_PB6 RK_FUNC_GPIO &pcfg_pull_down>;
 		};
 
 		soc_slppin_gpio: soc-slppin-gpio {
 			rockchip,pins =
-				<1 RK_PA5 0 &pcfg_output_low>;
+				<1 RK_PA5 RK_FUNC_GPIO &pcfg_output_low>;
 		};
 
 		soc_slppin_slp: soc-slppin-slp {
@@ -1233,51 +1233,61 @@
 	sdio-pwrseq {
 		wifi_enable_h: wifi-enable-h {
 			rockchip,pins =
-				<2 RK_PD3 0 &pcfg_pull_none>;
+				<2 RK_PD3 RK_FUNC_GPIO &pcfg_pull_none>;
 		};
 	};
 
 	sdmmc {
 		sdmmc_bus1: sdmmc-bus1 {
 			rockchip,pins =
-				<4 8 RK_FUNC_1 &pcfg_pull_up_10ma>;
+				<4 RK_PB0 1 &pcfg_pull_up_10ma>;
 		};
 
 		sdmmc_bus4: sdmmc-bus4 {
 			rockchip,pins =
-				<4 8 RK_FUNC_1 &pcfg_pull_up_10ma>,
-				<4 9 RK_FUNC_1 &pcfg_pull_up_10ma>,
-				<4 10 RK_FUNC_1 &pcfg_pull_up_10ma>,
-				<4 11 RK_FUNC_1 &pcfg_pull_up_10ma>;
+				<4 RK_PB0 1 &pcfg_pull_up_10ma>,
+				<4 RK_PB1 1 &pcfg_pull_up_10ma>,
+				<4 RK_PB2 1 &pcfg_pull_up_10ma>,
+				<4 RK_PB3 1 &pcfg_pull_up_10ma>;
 		};
 
 		sdmmc_clk: sdmmc-clk {
 			rockchip,pins =
-				<4 12 RK_FUNC_1 &pcfg_pull_none_10ma>;
+				<4 RK_PB4 1 &pcfg_pull_none_10ma>;
 		};
 
 		sdmmc_cmd: sdmmc-cmd {
 			rockchip,pins =
-				<4 13 RK_FUNC_1 &pcfg_pull_up_10ma>;
+				<4 RK_PB5 1 &pcfg_pull_up_10ma>;
 		};
 	};
 
 	tp_irq {
 		tp_irq_gpio: tp-irq-gpio {
 			rockchip,pins =
-				<3 RK_PB0 0 &pcfg_pull_up>;
+				<3 RK_PB0 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
+
+	usb-typec {
+		usbc0_int: usbc0-int {
+			rockchip,pins = <1 RK_PA2 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+
+		vcc5v0_typec0_en: vcc5v0-typec0-en {
+			rockchip,pins = <1 RK_PC2 RK_FUNC_GPIO &pcfg_pull_none>;
 		};
 	};
 
 	wireless-bluetooth {
 		bt_irq_gpio: bt-irq-gpio {
 			rockchip,pins =
-				<0 RK_PA5 0 &pcfg_pull_down>;
+				<0 RK_PA5 RK_FUNC_GPIO &pcfg_pull_down>;
 		};
 
 		uart0_gpios: uart0-gpios {
 			rockchip,pins =
-				<2 RK_PC3 0 &pcfg_pull_none>;
+				<2 RK_PC3 RK_FUNC_GPIO &pcfg_pull_none>;
 		};
 	};
 };

@@ -7,7 +7,7 @@
  * V0.0X01.0X01 add poweron function.
  * V0.0X01.0X02 fix mclk issue when probe multiple camera.
  * V0.0X01.0X03 add otp function.
- * V0.0X01.0X03 add enum_frame_interval function.
+ * V0.0X01.0X04 add enum_frame_interval function.
  */
 
 #include <linux/clk.h>
@@ -37,7 +37,7 @@
 #include <linux/rk-camera-module.h>
 
 /* verify default register values */
-//#define CHECK_REG_VALUE
+#define CHECK_REG_VALUE
 
 #define DRIVER_VERSION			KERNEL_VERSION(0, 0x01, 0x04)
 
@@ -541,7 +541,6 @@ static const struct regval ov5670_global_regs[] = {
 	{0x5045, 0x05}, //[2] enable MWB manual bias
 	{0x5048, 0x10}, //MWB manual bias be the same with 0x4003 BLC target.
 	//{0x0100, 0x01},
-
 	{REG_NULL, 0x00},
 };
 
@@ -930,14 +929,14 @@ static void ov5670_get_otp(struct ov5670_otp_info *otp,
 			if (ov5670_module_info[i].id == otp->module_id)
 				break;
 		}
-		strlcpy(inf->fac.module, ov5670_module_info[i].name,
+		strscpy(inf->fac.module, ov5670_module_info[i].name,
 			sizeof(inf->fac.module));
 
 		for (i = 0; i < ARRAY_SIZE(ov5670_lens_info) - 1; i++) {
 			if (ov5670_lens_info[i].id == otp->lens_id)
 				break;
 		}
-		strlcpy(inf->fac.lens, ov5670_lens_info[i].name,
+		strscpy(inf->fac.lens, ov5670_lens_info[i].name,
 			sizeof(inf->fac.lens));
 	}
 
@@ -976,11 +975,12 @@ static void ov5670_get_module_inf(struct ov5670 *ov5670,
 				  struct rkmodule_inf *inf)
 {
 	struct ov5670_otp_info *otp = ov5670->otp;
+
 	memset(inf, 0, sizeof(*inf));
-	strlcpy(inf->base.sensor, OV5670_NAME, sizeof(inf->base.sensor));
-	strlcpy(inf->base.module, ov5670->module_name,
+	strscpy(inf->base.sensor, OV5670_NAME, sizeof(inf->base.sensor));
+	strscpy(inf->base.module, ov5670->module_name,
 		sizeof(inf->base.module));
-	strlcpy(inf->base.lens, ov5670->len_name, sizeof(inf->base.lens));
+	strscpy(inf->base.lens, ov5670->len_name, sizeof(inf->base.lens));
 	if (otp)
 		ov5670_get_otp(otp, inf);
 }
@@ -1031,8 +1031,10 @@ static long ov5670_compat_ioctl32(struct v4l2_subdev *sd,
 		}
 
 		ret = ov5670_ioctl(sd, cmd, inf);
-		if (!ret)
-			ret = copy_to_user(up, inf, sizeof(*inf));
+		if (!ret) {
+			if (copy_to_user(up, inf, sizeof(*inf)))
+				return -EFAULT;
+		}
 		kfree(inf);
 		break;
 	case RKMODULE_AWB_CFG:
@@ -1042,9 +1044,10 @@ static long ov5670_compat_ioctl32(struct v4l2_subdev *sd,
 			return ret;
 		}
 
-		ret = copy_from_user(awb_cfg, up, sizeof(*awb_cfg));
-		if (!ret)
-			ret = ov5670_ioctl(sd, cmd, awb_cfg);
+		if (copy_from_user(awb_cfg, up, sizeof(*awb_cfg)))
+			return -EFAULT;
+
+		ret = ov5670_ioctl(sd, cmd, awb_cfg);
 		kfree(awb_cfg);
 		break;
 	default:
@@ -1055,6 +1058,7 @@ static long ov5670_compat_ioctl32(struct v4l2_subdev *sd,
 	return ret;
 }
 #endif
+
 /*--------------------------------------------------------------------------*/
 static int ov5670_apply_otp(struct ov5670 *ov5670)
 {
@@ -1403,6 +1407,20 @@ static int ov5670_enum_frame_interval(struct v4l2_subdev *sd,
 	return 0;
 }
 
+static int ov5670_g_mbus_config(struct v4l2_subdev *sd,
+				unsigned int pad_id,
+				struct v4l2_mbus_config *config)
+{
+	u32 val = 1 << (OV5670_LANES - 1) |
+		V4L2_MBUS_CSI2_CHANNEL_0 |
+		V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
+
+	config->type = V4L2_MBUS_CSI2_DPHY;
+	config->flags = val;
+
+	return 0;
+}
+
 static const struct dev_pm_ops ov5670_pm_ops = {
 	SET_RUNTIME_PM_OPS(ov5670_runtime_suspend,
 			   ov5670_runtime_resume, NULL)
@@ -1433,6 +1451,7 @@ static const struct v4l2_subdev_pad_ops ov5670_pad_ops = {
 	.enum_frame_interval = ov5670_enum_frame_interval,
 	.get_fmt = ov5670_get_fmt,
 	.set_fmt = ov5670_set_fmt,
+	.get_mbus_config = ov5670_g_mbus_config,
 };
 
 static const struct v4l2_subdev_ops ov5670_subdev_ops = {
@@ -1470,11 +1489,11 @@ static int ov5670_set_ctrl(struct v4l2_ctrl *ctrl)
 		/*group 0*/
 		ret = ov5670_write_reg(ov5670->client, OV5670_REG_GROUP,
 					   OV5670_REG_VALUE_08BIT, 0x00);
-		ret = ov5670_write_reg(ov5670->client, OV5670_REG_EXPOSURE,
+		ret |= ov5670_write_reg(ov5670->client, OV5670_REG_EXPOSURE,
 				       OV5670_REG_VALUE_24BIT, ctrl->val << 4);
-		ret = ov5670_write_reg(ov5670->client, OV5670_REG_GROUP,
+		ret |= ov5670_write_reg(ov5670->client, OV5670_REG_GROUP,
 					   OV5670_REG_VALUE_08BIT, 0x10);
-		ret = ov5670_write_reg(ov5670->client, OV5670_REG_GROUP,
+		ret |= ov5670_write_reg(ov5670->client, OV5670_REG_GROUP,
 					   OV5670_REG_VALUE_08BIT, 0xa0);
 
 		break;
@@ -1483,16 +1502,16 @@ static int ov5670_set_ctrl(struct v4l2_ctrl *ctrl)
 		ret = ov5670_write_reg(ov5670->client, OV5670_REG_GROUP,
 					   OV5670_REG_VALUE_08BIT, 0x01);
 
-		ret = ov5670_write_reg(ov5670->client, OV5670_REG_GAIN_L,
+		ret |= ov5670_write_reg(ov5670->client, OV5670_REG_GAIN_L,
 				       OV5670_REG_VALUE_08BIT,
 				       ctrl->val & OV5670_GAIN_L_MASK);
 		ret |= ov5670_write_reg(ov5670->client, OV5670_REG_GAIN_H,
 				       OV5670_REG_VALUE_08BIT,
 				       (ctrl->val >> OV5670_GAIN_H_SHIFT) &
 				       OV5670_GAIN_H_MASK);
-		ret = ov5670_write_reg(ov5670->client, OV5670_REG_GROUP,
+		ret |= ov5670_write_reg(ov5670->client, OV5670_REG_GROUP,
 					   OV5670_REG_VALUE_08BIT, 0x11);
-		ret = ov5670_write_reg(ov5670->client, OV5670_REG_GROUP,
+		ret |= ov5670_write_reg(ov5670->client, OV5670_REG_GROUP,
 					   OV5670_REG_VALUE_08BIT, 0xa1);
 		break;
 	case V4L2_CID_VBLANK:
@@ -1590,7 +1609,7 @@ err_free_handler:
 
 static int ov5670_otp_read(struct ov5670 *ov5670)
 {
-	int otp_flag, addr, temp, i;
+	int otp_flag, addr, temp = 0, i;
 	struct ov5670_otp_info *otp_ptr;
 	struct device *dev = &ov5670->client->dev;
 	struct i2c_client *client = ov5670->client;
@@ -1769,7 +1788,7 @@ static int ov5670_parse_of(struct ov5670 *ov5670)
 	}
 
 	ov5670->lane_num = rval;
-	if (2 == ov5670->lane_num) {
+	if (ov5670->lane_num == 2) {
 		ov5670->cur_mode = &supported_modes_2lane[0];
 		supported_modes = supported_modes_2lane;
 		ov5670->cfg_num = ARRAY_SIZE(supported_modes_2lane);
@@ -1894,8 +1913,8 @@ static int ov5670_probe(struct i2c_client *client,
 #endif
 #if defined(CONFIG_MEDIA_CONTROLLER)
 	ov5670->pad.flags = MEDIA_PAD_FL_SOURCE;
-	sd->entity.type = MEDIA_ENT_T_V4L2_SUBDEV_SENSOR;
-	ret = media_entity_init(&sd->entity, 1, &ov5670->pad, 0);
+	sd->entity.function = MEDIA_ENT_F_CAM_SENSOR;
+	ret = media_entity_pads_init(&sd->entity, 1, &ov5670->pad);
 	if (ret < 0)
 		goto err_power_off;
 #endif

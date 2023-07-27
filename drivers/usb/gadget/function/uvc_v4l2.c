@@ -1,13 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  *	uvc_v4l2.c  --  USB Video Class Gadget driver
  *
  *	Copyright (C) 2009-2010
  *	    Laurent Pinchart (laurent.pinchart@ideasonboard.com)
- *
- *	This program is free software; you can redistribute it and/or modify
- *	it under the terms of the GNU General Public License as published by
- *	the Free Software Foundation; either version 2 of the License, or
- *	(at your option) any later version.
  */
 
 #include <linux/device.h>
@@ -45,6 +41,7 @@ uvc_send_response(struct uvc_device *uvc, struct uvc_request_data *data)
 	req->length = min_t(unsigned int, uvc->event_length, data->length);
 	req->zero = data->length < uvc->event_length;
 
+	uvc_trace(UVC_TRACE_CONTROL, "%s: req len %d\n", __func__, req->length);
 	memcpy(req->buf, data->data, req->length);
 
 	return usb_ep_queue(cdev->gadget->ep0, req, GFP_KERNEL);
@@ -61,8 +58,10 @@ struct uvc_format {
 
 static struct uvc_format uvc_formats[] = {
 	{ 16, V4L2_PIX_FMT_YUYV  },
+	{ 12, V4L2_PIX_FMT_NV12  },
 	{ 0,  V4L2_PIX_FMT_MJPEG },
 	{ 0,  V4L2_PIX_FMT_H264  },
+	{ 0,  V4L2_PIX_FMT_H265  },
 };
 
 static int
@@ -174,7 +173,10 @@ uvc_v4l2_qbuf(struct file *file, void *fh, struct v4l2_buffer *b)
 	if (ret < 0)
 		return ret;
 
-	return uvcg_video_pump(video);
+	if (uvc->state == UVC_STATE_STREAMING)
+		schedule_work(&video->pump);
+
+	return ret;
 }
 
 static int
@@ -197,6 +199,9 @@ uvc_v4l2_streamon(struct file *file, void *fh, enum v4l2_buf_type type)
 
 	if (type != video->queue.queue.type)
 		return -EINVAL;
+
+	if (uvc->state != UVC_STATE_CONNECTED)
+		return -ENODEV;
 
 	/* Enable UVC video. */
 	ret = uvcg_video_enable(video, 1);
@@ -240,17 +245,56 @@ static int
 uvc_v4l2_subscribe_event(struct v4l2_fh *fh,
 			 const struct v4l2_event_subscription *sub)
 {
+	struct uvc_device *uvc = video_get_drvdata(fh->vdev);
+	struct uvc_file_handle *handle = to_uvc_file_handle(fh);
+	int ret;
+
 	if (sub->type < UVC_EVENT_FIRST || sub->type > UVC_EVENT_LAST)
 		return -EINVAL;
 
-	return v4l2_event_subscribe(fh, sub, 2, NULL);
+	if (sub->type == UVC_EVENT_SETUP && uvc->func_connected)
+		return -EBUSY;
+
+	ret = v4l2_event_subscribe(fh, sub, 2, NULL);
+	if (ret < 0)
+		return ret;
+
+	if (sub->type == UVC_EVENT_SETUP) {
+		uvc->func_connected = true;
+		handle->is_uvc_app_handle = true;
+		uvc_function_connect(uvc);
+	}
+
+	return 0;
+}
+
+static void uvc_v4l2_disable(struct uvc_device *uvc)
+{
+	uvc_function_disconnect(uvc);
+	uvcg_video_enable(&uvc->video, 0);
+	uvcg_free_buffers(&uvc->video.queue);
+	uvc->func_connected = false;
+	wake_up_interruptible(&uvc->func_connected_queue);
 }
 
 static int
 uvc_v4l2_unsubscribe_event(struct v4l2_fh *fh,
 			   const struct v4l2_event_subscription *sub)
 {
-	return v4l2_event_unsubscribe(fh, sub);
+	struct uvc_device *uvc = video_get_drvdata(fh->vdev);
+	struct uvc_file_handle *handle = to_uvc_file_handle(fh);
+	int ret;
+
+	ret = v4l2_event_unsubscribe(fh, sub);
+	if (ret < 0)
+		return ret;
+
+	if (sub->type == UVC_EVENT_SETUP && handle->is_uvc_app_handle) {
+		uvc_v4l2_disable(uvc);
+		handle->is_uvc_app_handle = false;
+	}
+
+	return 0;
 }
 
 static long
@@ -305,7 +349,6 @@ uvc_v4l2_open(struct file *file)
 	handle->device = &uvc->video;
 	file->private_data = &handle->vfh;
 
-	uvc_function_connect(uvc);
 	return 0;
 }
 
@@ -317,11 +360,9 @@ uvc_v4l2_release(struct file *file)
 	struct uvc_file_handle *handle = to_uvc_file_handle(file->private_data);
 	struct uvc_video *video = handle->device;
 
-	uvc_function_disconnect(uvc);
-
 	mutex_lock(&video->mutex);
-	uvcg_video_enable(video, 0);
-	uvcg_free_buffers(&video->queue);
+	if (handle->is_uvc_app_handle)
+		uvc_v4l2_disable(uvc);
 	mutex_unlock(&video->mutex);
 
 	file->private_data = NULL;
@@ -341,7 +382,7 @@ uvc_v4l2_mmap(struct file *file, struct vm_area_struct *vma)
 	return uvcg_queue_mmap(&uvc->video.queue, vma);
 }
 
-static unsigned int
+static __poll_t
 uvc_v4l2_poll(struct file *file, poll_table *wait)
 {
 	struct video_device *vdev = video_devdata(file);

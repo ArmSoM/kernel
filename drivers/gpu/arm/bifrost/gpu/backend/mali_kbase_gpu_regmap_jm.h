@@ -1,11 +1,12 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /*
  *
- * (C) COPYRIGHT 2019-2020 ARM Limited. All rights reserved.
+ * (C) COPYRIGHT 2019-2022 ARM Limited. All rights reserved.
  *
  * This program is free software and is provided to you under the terms of the
  * GNU General Public License version 2 as published by the Free Software
  * Foundation, and any use by you of this program is subject to the terms
- * of such GNU licence.
+ * of such GNU license.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -16,14 +17,11 @@
  * along with this program; if not, you can access it online at
  * http://www.gnu.org/licenses/gpl-2.0.html.
  *
- * SPDX-License-Identifier: GPL-2.0
- *
  */
-
 #ifndef _KBASE_GPU_REGMAP_JM_H_
 #define _KBASE_GPU_REGMAP_JM_H_
 
-#if MALI_USE_CSF
+#if MALI_USE_CSF && defined(__KERNEL__)
 #error "Cannot be compiled with CSF"
 #endif
 
@@ -61,9 +59,6 @@
 
 #define CORE_FEATURES           0x008   /* (RO) Shader Core Features */
 #define JS_PRESENT              0x01C   /* (RO) Job slots present */
-#define LATEST_FLUSH            0x038   /* (RO) Flush ID of latest
-					 * clean-and-invalidate operation
-					 */
 
 #define PRFCNT_BASE_LO   0x060  /* (RW) Performance counter memory
 				 * region base address, low word
@@ -132,29 +127,12 @@
 
 #define JOB_SLOT_REG(n, r)      (JOB_CONTROL_REG(JOB_SLOT0 + ((n) << 7)) + (r))
 
-#define JS_HEAD_LO             0x00	/* (RO) Job queue head pointer for job slot n, low word */
-#define JS_HEAD_HI             0x04	/* (RO) Job queue head pointer for job slot n, high word */
-#define JS_TAIL_LO             0x08	/* (RO) Job queue tail pointer for job slot n, low word */
-#define JS_TAIL_HI             0x0C	/* (RO) Job queue tail pointer for job slot n, high word */
-#define JS_AFFINITY_LO         0x10	/* (RO) Core affinity mask for job slot n, low word */
-#define JS_AFFINITY_HI         0x14	/* (RO) Core affinity mask for job slot n, high word */
-#define JS_CONFIG              0x18	/* (RO) Configuration settings for job slot n */
-#define JS_XAFFINITY           0x1C	/* (RO) Extended affinity mask for job
-					   slot n */
+#define JS_XAFFINITY           0x1C /* (RO) Extended affinity mask for job slot n*/
 
 #define JS_COMMAND             0x20	/* (WO) Command register for job slot n */
 #define JS_STATUS              0x24	/* (RO) Status register for job slot n */
 
-#define JS_HEAD_NEXT_LO        0x40	/* (RW) Next job queue head pointer for job slot n, low word */
-#define JS_HEAD_NEXT_HI        0x44	/* (RW) Next job queue head pointer for job slot n, high word */
-
-#define JS_AFFINITY_NEXT_LO    0x50	/* (RW) Next core affinity mask for job slot n, low word */
-#define JS_AFFINITY_NEXT_HI    0x54	/* (RW) Next core affinity mask for job slot n, high word */
-#define JS_CONFIG_NEXT         0x58	/* (RW) Next configuration settings for job slot n */
-#define JS_XAFFINITY_NEXT      0x5C	/* (RW) Next extended affinity mask for
-					   job slot n */
-
-#define JS_COMMAND_NEXT        0x60	/* (RW) Next command register for job slot n */
+#define JS_XAFFINITY_NEXT      0x5C /* (RW) Next extended affinity mask for job slot n */
 
 #define JS_FLUSH_ID_NEXT       0x70	/* (RW) Next job slot n cache flush ID */
 
@@ -176,6 +154,7 @@
 /* Possible values of JS_CONFIG and JS_CONFIG_NEXT registers */
 #define JS_CONFIG_START_FLUSH_NO_ACTION        (0u << 0)
 #define JS_CONFIG_START_FLUSH_CLEAN            (1u << 8)
+#define JS_CONFIG_START_FLUSH_INV_SHADER_OTHER (2u << 8)
 #define JS_CONFIG_START_FLUSH_CLEAN_INVALIDATE (3u << 8)
 #define JS_CONFIG_START_MMU                    (1u << 10)
 #define JS_CONFIG_JOB_CHAIN_FLAG               (1u << 11)
@@ -262,14 +241,26 @@
 #define GPU_COMMAND_CLEAN_INV_CACHES   0x08 /* Clean and invalidate all caches */
 #define GPU_COMMAND_SET_PROTECTED_MODE 0x09 /* Places the GPU in protected mode */
 
+/* GPU_COMMAND cache flush alias to CSF command payload */
+#define GPU_COMMAND_CACHE_CLN_INV_L2 GPU_COMMAND_CLEAN_INV_CACHES
+#define GPU_COMMAND_CACHE_CLN_INV_L2_LSC GPU_COMMAND_CLEAN_INV_CACHES
+#define GPU_COMMAND_CACHE_CLN_INV_FULL GPU_COMMAND_CLEAN_INV_CACHES
+#define GPU_COMMAND_CACHE_CLN_INV_LSC GPU_COMMAND_CLEAN_INV_CACHES
+
+/* Merge cache flush commands */
+#define GPU_COMMAND_FLUSH_CACHE_MERGE(cmd1, cmd2)                              \
+	((cmd1) > (cmd2) ? (cmd1) : (cmd2))
+
 /* IRQ flags */
-#define GPU_FAULT               (1 << 0)    /* A GPU Fault has occurred */
-#define MULTIPLE_GPU_FAULTS     (1 << 7)    /* More than one GPU Fault occurred.  */
-#define RESET_COMPLETED         (1 << 8)    /* Set when a reset has completed.  */
-#define POWER_CHANGED_SINGLE    (1 << 9)    /* Set when a single core has finished powering up or down. */
-#define POWER_CHANGED_ALL       (1 << 10)   /* Set when all cores have finished powering up or down. */
-#define PRFCNT_SAMPLE_COMPLETED (1 << 16)   /* Set when a performance count sample has completed. */
-#define CLEAN_CACHES_COMPLETED  (1 << 17)   /* Set when a cache clean operation has completed. */
+#define GPU_FAULT (1 << 0) /* A GPU Fault has occurred */
+#define MULTIPLE_GPU_FAULTS (1 << 7) /* More than one GPU Fault occurred.  */
+#define RESET_COMPLETED (1 << 8) /* Set when a reset has completed.  */
+#define POWER_CHANGED_SINGLE (1 << 9) /* Set when a single core has finished powering up or down. */
+#define POWER_CHANGED_ALL (1 << 10) /* Set when all cores have finished powering up or down. */
+#define PRFCNT_SAMPLE_COMPLETED (1 << 16) /* Set when a performance count sample has completed. */
+#define CLEAN_CACHES_COMPLETED (1 << 17) /* Set when a cache clean operation has completed. */
+#define FLUSH_PA_RANGE_COMPLETED                                                                   \
+	(1 << 20) /* Set when a physical range cache clean operation has completed. */
 
 /*
  * In Debug build,
